@@ -106,7 +106,7 @@ jobs:
       - name: Download iOS SDK
         if: steps.SDK.outputs.cache-hit != 'true'
         run: |
-          git clone --quiet -n --depth=1 --filter=tree:0 https://github.com/aricloverALT/sdks/ sdks
+          git clone --quiet -n --depth=1 --filter=tree:0 https://github.com sdks
           cd sdks
           git sparse-checkout set --no-cone iPhoneOS${{ inputs.sdk_version }}.sdk
           git checkout --quiet
@@ -195,7 +195,7 @@ jobs:
           sed -i '' "s/^BUNDLE_ID .*/BUNDLE_ID = ${{ inputs.bundle_id }}/" Makefile || echo "BUNDLE_ID = ${{ inputs.bundle_id }}" >> Makefile
           sed -i '' "s/^DISPLAY_NAME .*/DISPLAY_NAME = ${{ inputs.app_name }}/" Makefile || echo "DISPLAY_NAME = ${{ inputs.app_name }}" >> Makefile
           sed -i '' "s/^export TARGET .*/export TARGET = iphone:clang:${{ inputs.sdk_version }}:15.0/" Makefile || echo "export TARGET = iphone:clang:${{ inputs.sdk_version }}:15.0" >> Makefile
-          make package THEOS_PACKAGE_SCHEME=rootless IPA=Payload/YouTube.app FINALPACKAGE=1 YTUHD_ENABLED=${{ inputs.ytuhd && '1' || '0' }} SPONSORBLOCK_ENABLED=${{ inputs.sponsorblock && '1' || '0' }}
+          make package THEOS_PACKAGE_SCHEME=rootless IPA=Payload/YouTube.app FINALPACKAGE=1 SUBPROJECTS="" YTUHD_ENABLED=${{ inputs.ytuhd && '1' || '0' }} SPONSORBLOCK_ENABLED=${{ inputs.sponsorblock && '1' || '0' }}
           echo "package=$(ls -t packages | head -n1)" >> $GITHUB_OUTPUT
 
         env:
@@ -230,114 +230,3 @@ jobs:
             OUTNAME="$(basename "$(find . -maxdepth 3 -name 'uYouEnhanced_*.ipa' -print -quit)")"
           fi
           echo "Final IPA: $OUTNAME"
-
-          echo "--- .appex bundles contained in final IPA ---"
-          unzip -Z1 "$OUTNAME" | grep '\.appex/' | sed 's|^\(.*\.appex\)/.*|\1|' | sort -u | tee appex_list.txt || true
-
-          BAD="$(grep -v '/PlugIns/' appex_list.txt || true)"
-          if [ -n "$BAD" ]; then
-            echo "Removing unresignable extensions:"
-            printf '%s\n' "$BAD"
-            printf '%s\n' "$BAD" | while IFS= read -r d; do
-              zip -q -d "$OUTNAME" "${d}/*" || true
-            done
-          else
-            echo "All extensions are under PlugIns/ - OK for SideStore."
-          fi
-          SC_INFO_MATCHES="$(unzip -Z1 "$OUTNAME" | grep '/SC_Info/' || true)"
-          if [ -n "$SC_INFO_MATCHES" ]; then
-            echo "Removing files under SC_Info/ - OK for AltStore.:"
-            printf '%s\n' "$SC_INFO_MATCHES"
-            zip -q -d "$OUTNAME" "Payload/*/SC_Info/*" "Payload/*/SC_Info" || true
-          fi
-          mkdir -p main/packages
-          cp -f "$OUTNAME" "main/packages/$OUTNAME"
-          find main/packages -maxdepth 1 -name "*.ipa" ! -name "$OUTNAME" -delete || true
-          echo "Final SideStore-compatible IPA: main/packages/$OUTNAME"
-          echo "final_ipa=$OUTNAME" >> "$GITHUB_OUTPUT"
-
-      - name: Register Alternate App Icons
-        run: |
-          set -euo pipefail
-          IPA="main/packages/${{ steps.strip_ipa.outputs.final_ipa }}"
-          rm -rf iconwork && mkdir -p iconwork/icons && cd iconwork
-          unzip -q "../$IPA" "Payload/YouTube.app/Info.plist"
-          PLIST="Payload/YouTube.app/Info.plist"
-          RAW_ICON_SRC="../main/Localizations/uYouPlus.bundle/AppIcons"
-          ICON_SRC="icons"
-          for f in "$RAW_ICON_SRC"/*.png; do
-            name="$(basename "$f")"
-            pngquant --quality=80-95 --strip --skip-if-larger "$f" --output "$ICON_SRC/$name" >/dev/null 2>&1 || true
-            [ -f "$ICON_SRC/$name" ] || cp -f "$f" "$ICON_SRC/$name"
-          done
-          PB=/usr/libexec/PlistBuddy
-          BADICONS=0
-          for f in "$ICON_SRC"/*.png; do
-            SPEC="$(sips -g pixelWidth -g pixelHeight -g hasAlpha "$f" 2>/dev/null | awk '/pixelWidth/{w=$2} /pixelHeight/{h=$2} /hasAlpha/{a=$2} END{print w"x"h" alpha="a}')"
-            case "$SPEC" in
-              "1024x1024 alpha=no"*) ;;
-              *) echo "::warning::$(basename "$f") is $SPEC"; BADICONS=1 ;;
-            esac
-          done
-          if [ "$BADICONS" != 0 ]; then
-            echo "::error::app icons must be 1024x1024 opaque PNGs or iOS rejects them with OSStatus -54"
-            exit 1
-          fi
-          # Create intermediate dicts FIRST (PlistBuddy cannot nest-create).
-          for ROOT in CFBundleIcons "CFBundleIcons~ipad"; do
-            $PB -c "Add :$ROOT dict" "$PLIST" 2>/dev/null || true
-            $PB -c "Add :$ROOT:CFBundleAlternateIcons dict" "$PLIST" 2>/dev/null || true
-          done
-          for f in "$ICON_SRC"/*.png; do
-            NAME="$(basename "$f" .png)"
-            cp -f "$f" "Payload/YouTube.app/$NAME.png"
-            for ROOT in CFBundleIcons "CFBundleIcons~ipad"; do
-              $PB -c "Add :$ROOT:CFBundleAlternateIcons:$NAME dict" "$PLIST" 2>/dev/null || true
-              $PB -c "Add :$ROOT:CFBundleAlternateIcons:$NAME:CFBundleIconFiles array" "$PLIST" 2>/dev/null || true
-              $PB -c "Add :$ROOT:CFBundleAlternateIcons:$NAME:CFBundleIconFiles:0 string $NAME" "$PLIST" 2>/dev/null || true
-            done
-            echo "Registered alternate icon: $NAME"
-          done
-          $PB -c "Print :CFBundleIcons:CFBundleAlternateIcons" "$PLIST" | head -20
-          zip -q "../$IPA" "$PLIST" Payload/YouTube.app/*.png
-          cd .. && rm -rf iconwork
-          echo "Alternate icons registered into $(basename "$IPA")"
-
-      - name: Rebrand IPA Filename (3.0.4 -> 3.0.5)
-        run: |
-          set -euo pipefail
-          cd main/packages
-          OLD="${{ steps.strip_ipa.outputs.final_ipa }}"
-          NEW="${OLD//3.0.4/3.0.5}"
-          if [ "$OLD" != "$NEW" ] && [ -f "$OLD" ]; then
-            mv "$OLD" "$NEW"
-            echo "Renamed: $OLD -> $NEW"
-          else
-            echo "No 3.0.4 in filename or file missing: $OLD"
-          fi
-          echo "RENAMED_IPA=$NEW" >> "$GITHUB_ENV"
-
-      - name: Upload Artifact
-        if: ${{ inputs.upload_artifact }}
-        uses: actions/upload-artifact@v7
-        env:
-          UYOU_VERSION: ${{ inputs.uyou_version }}
-          YOUTUBE_VERSION: ${{ steps.prepare_youtube.outputs.youtube_version }}
-        with:
-          name: uYouEnhanced_${{ env.YOUTUBE_VERSION }}_${{ env.UYOU_VERSION }}
-          path: ${{ github.workspace }}/main/packages/${{ env.RENAMED_IPA || steps.strip_ipa.outputs.final_ipa }}
-          if-no-files-found: error
-
-      - name: Create Release
-        if: ${{ inputs.create_release }}
-        id: create_release
-        uses: softprops/action-gh-release@v3
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          UYOU_VERSION: ${{ inputs.uyou_version }}
-          YOUTUBE_VERSION: ${{ steps.prepare_youtube.outputs.youtube_version }}
-        with:
-          tag_name: v${{ env.YOUTUBE_VERSION }}-${{ env.UYOU_VERSION }}-(${{ github.run_number }})
-          name: v${{ env.YOUTUBE_VERSION }}-${{ env.UYOU_VERSION }}-(${{ github.run_number }})
-          files: main/packages/*.ipa
-          draft: true
