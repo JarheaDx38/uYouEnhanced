@@ -69,7 +69,7 @@ concurrency:
 jobs:
   build:
     name: Build uYouEnhanced
-    runs-on: macos-14
+    runs-on: macos-15
     permissions:
       contents: write
 
@@ -106,7 +106,7 @@ jobs:
       - name: Download iOS SDK
         if: steps.SDK.outputs.cache-hit != 'true'
         run: |
-          git clone --quiet -n --depth=1 --filter=tree:0 https://github.com sdks
+          git clone --quiet -n --depth=1 --filter=tree:0 https://github.com/aricloverALT/sdks/ sdks
           cd sdks
           git sparse-checkout set --no-cone iPhoneOS${{ inputs.sdk_version }}.sdk
           git checkout --quiet
@@ -195,7 +195,7 @@ jobs:
           sed -i '' "s/^BUNDLE_ID .*/BUNDLE_ID = ${{ inputs.bundle_id }}/" Makefile || echo "BUNDLE_ID = ${{ inputs.bundle_id }}" >> Makefile
           sed -i '' "s/^DISPLAY_NAME .*/DISPLAY_NAME = ${{ inputs.app_name }}/" Makefile || echo "DISPLAY_NAME = ${{ inputs.app_name }}" >> Makefile
           sed -i '' "s/^export TARGET .*/export TARGET = iphone:clang:${{ inputs.sdk_version }}:15.0/" Makefile || echo "export TARGET = iphone:clang:${{ inputs.sdk_version }}:15.0" >> Makefile
-          make package THEOS_PACKAGE_SCHEME=rootless IPA=Payload/YouTube.app FINALPACKAGE=1 SUBPROJECTS="" YTUHD_ENABLED=${{ inputs.ytuhd && '1' || '0' }} SPONSORBLOCK_ENABLED=${{ inputs.sponsorblock && '1' || '0' }}
+          make package THEOS_PACKAGE_SCHEME=rootless IPA=Payload/YouTube.app FINALPACKAGE=1 YTUHD_ENABLED=${{ inputs.ytuhd && '1' || '0' }} SPONSORBLOCK_ENABLED=${{ inputs.sponsorblock && '1' || '0' }}
           echo "package=$(ls -t packages | head -n1)" >> $GITHUB_OUTPUT
 
         env:
